@@ -24,60 +24,91 @@ var assert = require('assert');
 //
 
 ///////////////////////////////////////////////////////////////////////////////
-// GENERATION OF Ku
+// CONSTANTS
 ///////////////////////////////////////////////////////////////////////////////
 
-//TODO: argon2 vs scrypt
-// as far as I can tell, argon2 is more configurable and also newer (?)
 var KEY_LEN = sodium.crypto_aead_aes256gcm_KEYBYTES;
 var SALT_LEN = crypto_pwhash_argon2i_SALTBYTES;
 var OPS_LIMIT = crypto_pwhash_argon2i_OPSLIMIT_INTERACTIVE; //TODO check this
 var MEM_LIMIT = crypto_pwhash_argon2i_MEMLIMIT_INTERACTIVE; //TODO check this
-var ALGORITHM = crypto_pwhash_argon2i_ALG_ARGON2I13;
+var KDF_ALGORITHM = crypto_pwhash_argon2i_ALG_ARGON2I13;
+//TODO: argon2 vs scrypt
+// as far as I can tell, argon2 is more configurable and also newer (?)
 
-var salt = Buffer.allocUnsafe(SALT_LEN);
-sodium.randombytes_buf(salt);
+///////////////////////////////////////////////////////////////////////////////
+// HELPER FUNCTIONS
+///////////////////////////////////////////////////////////////////////////////
 
+/**
+ * Creates and returns a random buffer of the specified length
+ * @param {int} length
+ * @return {Buffer} random buffer of this length
+ */
+function randomBuffer(length) {
+    var buffer = Buffer.allocUnsafe(length);
+    sodium.randombytes_buf(buffer);
+    return buffer;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// GENERATION OF USER KEYS
+///////////////////////////////////////////////////////////////////////////////
+
+/**
+ * Generates user key using Argon2i
+ * @param {Buffer} password
+ * @param {Buffer} salt
+ * @return {Buffer} Ku, the user's half of their symmetric key
+ */
+function generateKu(password, salt) {
+    var Ku = Buffer.allocUnsafe(KEY_LEN);
+    crypto_pwhash_argon2i(Ku, KEY_LEN, password, password.length, salt,
+            OPS_LIMIT, MEM_LIMIT, KDF_ALGORITHM);
+    return Ku; //TODO: does this need to be passed into the function?
+}
+
+/**
+ * Generates a random number which is XORed with Ku to get Ksu.  This MUST
+ * be saved somewhere or else the key will no longer function.
+ * @return {Buffer} Ks, the server's half of the user's symmetric key
+ */
+function generateKs() {
+    return randomBuffer(KEY_LEN);
+}
+
+/**
+ * XORs Ku and Ks to get Ksu
+ * @param {Buffer} Ku, the user's half of their key
+ * @param {Buffer} Ks, the server's half of this user key
+ * @return {Buffer} Ksu, the XOR of Ku and Ks, and the symmetric encryption
+ *                       key for this user
+ */
+function generateKsu(Ku, Ks) {
+    assert(Ku.length == Ks.length == KEY_LENGTH);
+    var Ksu = Buffer.allocUnsafe(KEY_LENGTH);
+    for (var i=0; i < KEY_LENGTH; ++i) {
+        Ksu[i] = Ku[i] ^ Ks[i];
+    }
+    return Ksu
+}
+
+var salt = randomBuffer(SALT_LEN);
 var password = "a user typed this";
 
-// Get Ku from password
-var Ku = Buffer.allocUnsafe(KEY_LEN);
-crypto_pwhash_argon2i(crypto_pwhash_argon2i,
-        KEY_LEN,
-        password,
-        password.length,
-        salt,
-        OPS_LIMIT,
-        MEM_LIMIT,
-        ALGORITHM);
+var Ku = generateKu(password, salt);
+var Ks = generateKs();
+var Ksu = generateKsu(Ku, Ks);
 
-console.log(Ku); //TODO
+
+//TODO: sanitize all inputs
+//TODO: test all
+
+
 
 
 ///////////////////////////////////////////////////////////////////////////////
-// GENERATION OF Ku
+// OLD STUFF
 ///////////////////////////////////////////////////////////////////////////////
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // USER KEYS AND FILE INFO
