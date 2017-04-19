@@ -28,10 +28,10 @@ var assert = require('assert');
 ///////////////////////////////////////////////////////////////////////////////
 
 var KEY_LEN = sodium.crypto_aead_aes256gcm_KEYBYTES;
-var SALT_LEN = crypto_pwhash_argon2i_SALTBYTES;
-var OPS_LIMIT = crypto_pwhash_argon2i_OPSLIMIT_INTERACTIVE; //TODO check this
-var MEM_LIMIT = crypto_pwhash_argon2i_MEMLIMIT_INTERACTIVE; //TODO check this
-var KDF_ALGORITHM = crypto_pwhash_argon2i_ALG_ARGON2I13;
+var SALT_LEN = sodium.crypto_pwhash_argon2i_SALTBYTES;
+var OPS_LIMIT = sodium.crypto_pwhash_argon2i_OPSLIMIT_INTERACTIVE; //TODO check this
+var MEM_LIMIT = sodium.crypto_pwhash_argon2i_MEMLIMIT_INTERACTIVE; //TODO check this
+var KDF_ALGORITHM = sodium.crypto_pwhash_argon2i_ALG_ARGON2I13;
 //TODO: argon2 vs scrypt
 // as far as I can tell, argon2 is more configurable and also newer (?)
 
@@ -62,7 +62,7 @@ function randomBuffer(length) {
  */
 function generateKu(password, salt) {
     var Ku = Buffer.allocUnsafe(KEY_LEN);
-    crypto_pwhash_argon2i(Ku, KEY_LEN, password, password.length, salt,
+    sodium.crypto_pwhash_argon2i(Ku, password, salt,
             OPS_LIMIT, MEM_LIMIT, KDF_ALGORITHM);
     return Ku; //TODO: does this need to be passed into the function?
 }
@@ -84,20 +84,24 @@ function generateKs() {
  *                       key for this user
  */
 function generateKsu(Ku, Ks) {
-    assert(Ku.length == Ks.length == KEY_LENGTH);
-    var Ksu = Buffer.allocUnsafe(KEY_LENGTH);
-    for (var i=0; i < KEY_LENGTH; ++i) {
+    assert(Ku.length == Ks.length && Ks.length == KEY_LEN);
+    var Ksu = Buffer.allocUnsafe(KEY_LEN);
+    for (var i=0; i < KEY_LEN; ++i) {
         Ksu[i] = Ku[i] ^ Ks[i];
     }
     return Ksu
 }
 
 var salt = randomBuffer(SALT_LEN);
-var password = "a user typed this";
+var password = Buffer.from("a user typed this");
 
 var Ku = generateKu(password, salt);
 var Ks = generateKs();
 var Ksu = generateKsu(Ku, Ks);
+
+console.log(Ku);
+console.log(Ks);
+console.log(Ksu);
 
 
 //TODO: sanitize all inputs
