@@ -29,9 +29,11 @@ var assert = require('assert');
 
 var KEY_LEN = sodium.crypto_aead_aes256gcm_KEYBYTES;
 var SALT_LEN = sodium.crypto_pwhash_argon2i_SALTBYTES;
+var NONCE_LEN = sodium.crypto_aead_aes256gcm_NPUBBYTES;
 var OPS_LIMIT = sodium.crypto_pwhash_argon2i_OPSLIMIT_INTERACTIVE; //TODO check this
 var MEM_LIMIT = sodium.crypto_pwhash_argon2i_MEMLIMIT_INTERACTIVE; //TODO check this
 var KDF_ALGORITHM = sodium.crypto_pwhash_argon2i_ALG_ARGON2I13;
+var DELIMITER = "|";
 //TODO: argon2 vs scrypt
 // as far as I can tell, argon2 is more configurable and also newer (?)
 
@@ -99,34 +101,35 @@ var Ku = generateKu(password, salt);
 var Ks = generateKs();
 var Ksu = generateKsu(Ku, Ks);
 
-console.log(Ku);
-console.log(Ks);
-console.log(Ksu);
+console.log("Ku (never store):", Ku);
+console.log("Salt (store server-side):", salt);
+console.log("Ks (store server-side):", Ks);
+console.log("Ksu (never store):", Ksu);
 
 
 //TODO: sanitize all inputs
-//TODO: test all
-
-
-
-
-///////////////////////////////////////////////////////////////////////////////
-// OLD STUFF
-///////////////////////////////////////////////////////////////////////////////
 
 ///////////////////////////////////////////////////////////////////////////////
 // USER KEYS AND FILE INFO
 ///////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @return {Buffer} return a 256-bit AES key
+ */
+function generateFileKey() {
+    return randomBuffer(KEY_LEN);
+}
+
 // File ID and file key
 var fileID = 1;
 var file = Buffer.from("This is a file buffer");
-var fileKey = Buffer.allocUnsafe(sodium.crypto_aead_aes256gcm_KEYBYTES);
-sodium.randombytes_buf(fileKey);
+var fileKey = generateFileKey();
 
 // Users and their keys
 //TODO: for now, users are strings. They should be some kind of uniqueID.
 //TODO: this should be GCM_SIV, not plain GCM.
+
+// TBH I'm not really sure how we should manage this but I'm leaving it here in case it's helpful
 var userKeys = {};
 var patient1 = "abcd efg"
 var patient1Key = Buffer.allocUnsafe(sodium.crypto_aead_aes256gcm_KEYBYTES);
@@ -141,26 +144,102 @@ userKeys[doctor1] = doctor1Key;
 // ENCRYPTION
 ///////////////////////////////////////////////////////////////////////////////
 
-// Encrypt file key under user keys
-var encryptedFileKeys = {};
-var fileKeyPatient1Metadata = Buffer.from(patient1 + "|" + fileID);
-var nonce1 = Buffer.allocUnsafe(sodium.crypto_aead_aes256gcm_NPUBBYTES);
-encryptedFileKeys[fileID] = {};
-encryptedFileKeys[fileID][patient1] = sodium.crypto_aead_aes256gcm_encrypt(fileKey,
-	fileKeyPatient1Metadata, nonce1, userKeys[patient1]);
-var fileKeyDoctor1Metadata = Buffer.from(doctor1 + "|" + fileID);
-var nonce2 = Buffer.allocUnsafe(sodium.crypto_aead_aes256gcm_NPUBBYTES);
-encryptedFileKeys[fileID][doctor1] = sodium.crypto_aead_aes256gcm_encrypt(fileKey,
-	fileKeyDoctor1Metadata, nonce2, userKeys[doctor1]);
+/**
+ * @param fileID - the unique identifier of the file
+ * @param users - list of users who have access to this file
+ * @param userkeys - list of encrypted file keys (same order as users)
+ * @param nonces - list of nonces for file key decryption
+ * @return {Buffer} encoded metadata information about this file - which
+ *         users can access this and the encrypted file keys - format is:
+ *         |FILE_ID|NUM_USERS|USER1|...|USERN|KEY1|...|KEYN|NONCE1|...|NONCEN|
+ *         where '|' is DELIMITER.  Note the trailing |
+ */
+function encodeMetadata(fileID, users, encryptedFileKeys, nonces) {
+    //TODO: for now, users and userkeys are assumed to be lists of equal
+    //length with the same ordering
+    var metadata = DELIMITER + fileID + DELIMITER + users.length + DELIMITER;
+    assert(users.length == encryptedFileKeys.length);
+    assert(users.length == nonces.length);
+    for (var i=0; i < users.length; ++i) {
+        metadata += users[i] + DELIMITER;
+    }
+    for (var i=0; i < encryptedFileKeys.length; ++i) {
+        metadata += encryptedFileKeys[i] + DELIMITER;
+    }
+    for (var i=0; i < nonces.length; ++i) {
+        metadata += nonces[i] + DELIMITER;
+    }
+    return metadata;
+}
 
-// Encrypt file under file key, and include the encrypted file keys as metadata
-var fileMetadata = Buffer.from(fileID+"|||||"+
-	patient1+"|"+encryptedFileKeys[fileID][patient1]+"|||"+
-	doctor1+"|"+encryptedFileKeys[fileID][doctor1]+"|||");
-var nonce = Buffer.allocUnsafe(sodium.crypto_aead_aes256gcm_NPUBBYTES);
-sodium.randombytes_buf(nonce);
-var fileCiphertext = sodium.crypto_aead_aes256gcm_encrypt(file, fileMetadata,
-	nonce, fileKey);
+/**
+ * @param fileMetadata {Buffer} metadata formatted as:
+ *         |FILE_ID|NUM_USERS|USER1|...|USERN|KEY1|...|KEYN|NONCE1|...|NONCEN|
+ *         where '|' is DELIMITER.  Note the trailing |
+ * @return [fileID, users, encryptedFileKeys, nonces] where fileID is an int,
+ *         users, encryptedFileKeys, and nonces are all Buffers
+ */
+function decodeMetadata(fileMetadata) {
+    var splitMetadata = fileMetadata.toString().split(DELIMITER);
+    var fileID = splitMetadata[0].parseInt();
+    var numUsers = splitMetadata[1].parseInt();
+    var users = [];
+    var encryptedFileKeys = [];
+    var nonces = [];
+    for (var i=0; i < numUsers; ++i) {
+        users.push(splitMetadata[2 + i]);
+        encryptedFileKeys.push(splitMetadata[2 + numUsers + i]);
+        nonces.push(splitMetadata[2 + 2*numUsers + i]);
+    }
+    return [fileID, users, encryptedFileKeys, nonces];
+}
+
+/**
+ * Encrypt the file key under the Ksu, return [nonce, encFileKey]
+ * @param {Buffer} Ksu - The user's full symmetric key
+ * @param {Buffer} fileKey - the key to be encrypted
+ * @return [nonce, ciphertext] where the decryption is 
+ *         decrypt(ciphertext, Buffer.from(""), nonce, Ksu)
+ *         Both nonce and ciphertext are Buffers.
+ */
+function encryptFileKeyUnderKsu(Ksu, fileKey) {
+    var nonce = randomBuffer(NONCE_LEN);
+    var ciphertext = sodium.crypto_aead_aes256gcm_encrypt(fileKey, 
+            Buffer.from(""), nonce, Ksu);
+    return [nonce, ciphertext]
+}
+
+/*
+ * Encrypt the file under the file key, return [nonce, encFile],
+ * note that you have to hold on to the file metadata
+ * @param {Buffer} fileKey - the file key to encrypt this file
+ * @param {Buffer} file - the file to be encrypted
+ * @param {Buffer} fileMetadata - the metadata for this file;
+ *                 is required for decryption
+ * @return [nonce, ciphertext] where the decryption is
+ *         decrypt(ciphertext, fileMetadata, nonce, fileKey)
+ *         Both nonce and ciphertext are Buffers.
+ */
+function encryptFileUnderFileKey(fileKey, file, fileMetadata) {
+    var nonce = randomBuffer(NONCE_LEN);
+    var ciphertext = sodium.crypto_aead_aes256gcm_encrypt(Ksu,
+            fileMetadata, nonce, fileKey);
+    return [nonce, ciphertext]
+}
+
+var fileID = 1;
+var file = Buffer.from("hello I am a file");
+
+var fileKey = generateFileKey();
+var nonceAndCiphertext = encryptFileKeyUnderKsu(Ksu, fileKey);
+var fileKeyNonce = nonceAndCiphertext[0];
+var encryptedFileKey = nonceAndCiphertext[1];
+var fileMetadata = encodeMetadata(fileID, [patient1], 
+        [encryptedFileKey], [fileKeyNonce]);
+
+var fileNonceAndCiphertext = encryptFileUnderFileKey(fileKey, file, fileMetadata);
+var fileNonce = fileNonceAndCiphertext[0];
+var encryptedFile = fileNonceAndCiphertext[1];
 
 //TODO: There's an extended API that splits up incorporating the
 //key and the actual encryption steps.  If we're encrypting
@@ -173,7 +252,7 @@ var fileCiphertext = sodium.crypto_aead_aes256gcm_encrypt(file, fileMetadata,
 // Get file key from metadata
 // TODO: realistically, you'd get the encrypted file key from the file metadata,
 // not from some dictionary. Though then we still have to store the nonce there?
-patient1Key = patient1Key;
+
 var patient1FileKey = sodium.crypto_aead_aes256gcm_decrypt(
 	encryptedFileKeys[fileID][patient1], fileKeyPatient1Metadata, nonce1, patient1Key);
 var filePlaintext = sodium.crypto_aead_aes256gcm_decrypt(
