@@ -13,6 +13,13 @@ const MEMORY = 65536;
 
 
 class User extends MongoModels {
+
+    /**
+     * Generate an Argon2i hash for a given password.
+     *
+     * @param password The user's password
+     * @param callback
+     */
     static generatePasswordHash(password, callback) {
 
         const passwordBuffer = Buffer.from(password, 'utf8');
@@ -61,23 +68,60 @@ class User extends MongoModels {
         return out;
     }
 
-    static generateKeypair( password, callback ) {
+    /**
+     * Generate public and encrypted private key for a user.
+     *
+     * @param key   32 byte key to encrypt the private key. This should be the result
+     *              of generateArgonKey with the password hash of the user.
+     * @param callback
+     */
+    static generateKeypair(key, callback) {
         const keypair = Sodium.crypto_box_keypair();
 
-        password = password + keyConcat;
-        const passwordBuffer = Buffer.from(password, 'utf8');
-
-        const hash = Sodium.crypto_pwhash_argon2i_str(
-            passwordBuffer,
-            Sodium.crypto_pwhash_argon2i_OPSLIMIT_INTERACTIVE,
-            Sodium.crypto_pwhash_argon2i_MEMLIMIT_INTERACTIVE
+        const encPrivateKey = User.encryptRecordUnderKey(
+            keypair.secretKey,
+            Buffer.from([], 'utf8'),
+            Buffer.from(key, 'hex')
         );
 
         callback(null, {
-            password,
-            hash: hash.toString(),
-            keypair: keypair
+            publicKey: keypair.publicKey.toString('hex'),
+            encPrivateKey: encPrivateKey[0].toString('hex') + '$' + encPrivateKey[1].toString('hex')
         });
+    }
+
+    /**
+     * Encrypt the file under the file key, return [nonce, encFile],
+     * note that you have to hold on to the file metadata
+     *
+     * @param record - the record to be encrypted
+     * @param recordMetadata - the metadata for this file;
+     *                 is required for decryption
+     * @param key - the file key to encrypt this file
+     * @return [nonce, ciphertext] where the decryption is
+     *         decrypt(ciphertext, fileMetadata, nonce, fileKey)
+     *         Both nonce and ciphertext are Buffers.
+     */
+    static encryptRecordUnderKey(record, recordMetadata, key) {
+        const nonce = User.randomBuffer(Sodium.crypto_aead_aes256gcm_NPUBBYTES);
+        const cipherText = Sodium.crypto_aead_aes256gcm_encrypt(
+            record,
+            recordMetadata,
+            nonce,
+            key);
+
+        return [nonce, cipherText]
+    }
+
+    /**
+     * Creates and returns a random buffer of the specified length.
+     * @param {int} length
+     * @return {Buffer} random buffer of this length
+     */
+    static randomBuffer(length) {
+        let buffer = Buffer.allocUnsafe(length);
+        Sodium.randombytes_buf(buffer);
+        return buffer;
     }
 
     static create(username, password, email, callback) {
@@ -85,9 +129,13 @@ class User extends MongoModels {
         const self = this;
 
         Async.auto({
-            passwordHash: this.generatePasswordHash.bind(this, password),
-            //keypair: this.generateKeypair.bind(this, password),
-            newUser: ['passwordHash', function (results, done) {
+            passwordHash: function (done) {
+                User.generatePasswordHash(password, done);
+            },
+            keypair: ['passwordHash', function (results, done) {
+                User.generateKeypair(results.passwordHash.hash, done);
+            }],
+            newUser: ['keypair', function (results, done) {
 
                 const document = {
                     isActive: true,
@@ -163,7 +211,7 @@ class User extends MongoModels {
 
     static findByUsername(username, callback) {
 
-        const query = { username: username.toLowerCase() };
+        const query = {username: username.toLowerCase()};
 
         this.findOne(query, callback);
     }
@@ -260,8 +308,8 @@ User.schema = Joi.object().keys({
 
 
 User.indexes = [
-    { key: { username: 1, unique: 1 } },
-    { key: { email: 1, unique: 1 } }
+    {key: {username: 1, unique: 1}},
+    {key: {email: 1, unique: 1}}
 ];
 
 

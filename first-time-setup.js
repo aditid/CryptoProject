@@ -86,7 +86,13 @@ Async.auto({
             user: ['clean', function (dbResults, done) {
 
                 Async.auto({
-                    passwordHash: User.generatePasswordHash.bind(this, results.rootPassword)
+                    //passwordHash: User.generatePasswordHash.bind(this, results.rootPassword)
+                    passwordHash: function (done) {
+                        User.generatePasswordHash(results.rootPassword, done);
+                    },
+                    keypair: ['passwordHash', function (results, done) {
+                        User.generateKeypair(results.passwordHash.hash, done);
+                    }]
                 }, (err, passResults) => {
 
                     if (err) {
