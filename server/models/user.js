@@ -7,7 +7,7 @@ const Joi = require('joi');
 const MongoModels = require('mongo-models');
 
 const AUTH_SALT = '0000000000000000';
-const KEY_SALT = '0000000000000001';
+const PRIVATE_KEY_SALT = '0000000000000001';
 const ITERATIONS = 4;
 const MEMORY = 65536;
 
@@ -34,11 +34,13 @@ class User extends MongoModels {
         const hash = hashParts[hashParts.length - 1];
         const salt = hashParts[hashParts.length - 2];
 
-        let out = User.generateArgonKey(32, hash, AUTH_SALT);
+        let authKey = User.generateArgonKey(32, hash, AUTH_SALT);
+        let privKeyEncKey = User.generateArgonKey(32, hash, PRIVATE_KEY_SALT);
 
         callback(null, {
             password,
-            hash: out.toString('hex'),
+            privKeyEncKey: privKeyEncKey,
+            authKey: authKey.toString('hex'),
             salt: salt
         });
     }
@@ -133,15 +135,17 @@ class User extends MongoModels {
                 User.generatePasswordHash(password, done);
             },
             keypair: ['passwordHash', function (results, done) {
-                User.generateKeypair(results.passwordHash.hash, done);
+                User.generateKeypair(results.passwordHash.privKeyEncKey, done);
             }],
             newUser: ['keypair', function (results, done) {
 
                 const document = {
                     isActive: true,
                     username: username.toLowerCase(),
-                    password: results.passwordHash.hash,
+                    password: results.passwordHash.authKey,
                     salt: results.passwordHash.salt,
+                    publicKey: results.keypair.publicKey,
+                    encPrivateKey: results.keypair.encPrivateKey,
                     email: email.toLowerCase(),
                     timeCreated: new Date()
                 };

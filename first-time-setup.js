@@ -91,7 +91,7 @@ Async.auto({
                         User.generatePasswordHash(results.rootPassword, done);
                     },
                     keypair: ['passwordHash', function (results, done) {
-                        User.generateKeypair(results.passwordHash.hash, done);
+                        User.generateKeypair(results.passwordHash.privKeyEncKey, done);
                     }]
                 }, (err, passResults) => {
 
@@ -104,6 +104,9 @@ Async.auto({
                         isActive: true,
                         username: 'root',
                         password: passResults.passwordHash.hash,
+                        salt: passResults.passwordHash.salt,
+                        publicKey: passResults.keypair.publicKey,
+                        encPrivateKey: passResults.keypair.encPrivateKey,
                         email: results.rootEmail.toLowerCase(),
                         timeCreated: new Date()
                     };
