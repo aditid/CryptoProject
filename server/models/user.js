@@ -6,9 +6,16 @@ const Sodium = require('sodium').api;
 const Joi = require('joi');
 const MongoModels = require('mongo-models');
 
+const authConcat = '0';
+const keyConcat = '1';
+
 
 class User extends MongoModels {
     static generatePasswordHash(password, callback) {
+
+        // User password is used both for authentication and key generation
+        // Append "nonce" to generate two different hashes
+        password = password + authConcat;
 
         const passwordBuffer = Buffer.from(password, 'utf8');
 
@@ -20,7 +27,7 @@ class User extends MongoModels {
 
         callback(null, {
             password,
-            hash: hash
+            hash: hash.toString()
         });
     }
 
@@ -81,8 +88,13 @@ class User extends MongoModels {
                 }
 
                 const source = Buffer.from(results.user.password, 'utf8');
-                Sodium.crypto_pwhash_argon2i_str_verify(source, password);
-                done();
+                // User password is used both for authentication and key generation
+                // Append "nonce" to generate two different hashes
+                password = password + authConcat;
+
+                let res = Sodium.crypto_pwhash_argon2i_str_verify(source, Buffer.from(password, 'utf8'));
+
+                done(null, res);
             }]
         }, (err, results) => {
 
@@ -174,6 +186,8 @@ User.schema = Joi.object().keys({
     isActive: Joi.boolean().default(true),
     username: Joi.string().token().lowercase().required(),
     password: Joi.string(),
+    publicKey: Joi.string(),
+    encPrivateKey: Joi.string(),
     email: Joi.string().email().lowercase().required(),
     roles: Joi.object().keys({
         admin: Joi.object().keys({

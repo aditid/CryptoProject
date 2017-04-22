@@ -5,7 +5,7 @@ const Joi = require('joi');
 const MongoModels = require('mongo-models');
 const Uuid = require('uuid');
 
-
+// TODO remove bcrypt
 class Session extends MongoModels {
     static generateKeyHash(callback) {
 
@@ -111,6 +111,7 @@ Session.schema = Joi.object().keys({
     _id: Joi.object(),
     userId: Joi.string().required(),
     key: Joi.string().required(),
+    //privateKeyServerShare: Joi.string().required(),
     time: Joi.date().required()
 });
 
