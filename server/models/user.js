@@ -6,17 +6,65 @@ const Sodium = require('sodium').api;
 const Joi = require('joi');
 const MongoModels = require('mongo-models');
 
-const authConcat = '0';
-const keyConcat = '1';
+const AUTH_SALT = '0000000000000000';
+const KEY_SALT = '0000000000000001';
+const ITERATIONS = 4;
+const MEMORY = 65536;
 
 
 class User extends MongoModels {
     static generatePasswordHash(password, callback) {
 
-        // User password is used both for authentication and key generation
-        // Append "nonce" to generate two different hashes
-        password = password + authConcat;
+        const passwordBuffer = Buffer.from(password, 'utf8');
 
+        const encodedHash = Sodium.crypto_pwhash_argon2i_str(
+            passwordBuffer,
+            ITERATIONS,
+            MEMORY
+        );
+
+        const hashParts = encodedHash.toString().split('$');
+        const hash = hashParts[hashParts.length - 1];
+        const salt = hashParts[hashParts.length - 2];
+
+        let out = User.generateArgonKey(32, hash, AUTH_SALT);
+
+        callback(null, {
+            password,
+            hash: out.toString('hex'),
+            salt: salt
+        });
+    }
+
+    /**
+     * Key derivation based on Argon2i.
+     *
+     * @param key_length Length of derived key
+     * @param pass Password for key derivation
+     * @param salt Salt for key derivation
+     * @returns {Buffer}
+     */
+    static generateArgonKey(key_length, pass, salt) {
+        let out = Buffer.allocUnsafe(key_length);
+        const password = Buffer.from(pass, 'utf8');
+        salt = Buffer.from(salt, 'utf8');
+
+        Sodium.crypto_pwhash_argon2i(
+            out,
+            password,
+            salt,
+            ITERATIONS,
+            MEMORY,
+            Sodium.crypto_pwhash_argon2i_ALG_ARGON2I13
+        );
+
+        return out;
+    }
+
+    static generateKeypair( password, callback ) {
+        const keypair = Sodium.crypto_box_keypair();
+
+        password = password + keyConcat;
         const passwordBuffer = Buffer.from(password, 'utf8');
 
         const hash = Sodium.crypto_pwhash_argon2i_str(
@@ -27,7 +75,8 @@ class User extends MongoModels {
 
         callback(null, {
             password,
-            hash: hash.toString()
+            hash: hash.toString(),
+            keypair: keypair
         });
     }
 
@@ -37,12 +86,14 @@ class User extends MongoModels {
 
         Async.auto({
             passwordHash: this.generatePasswordHash.bind(this, password),
+            //keypair: this.generateKeypair.bind(this, password),
             newUser: ['passwordHash', function (results, done) {
 
                 const document = {
                     isActive: true,
                     username: username.toLowerCase(),
                     password: results.passwordHash.hash,
+                    salt: results.passwordHash.salt,
                     email: email.toLowerCase(),
                     timeCreated: new Date()
                 };
@@ -185,9 +236,10 @@ User.schema = Joi.object().keys({
     _id: Joi.object(),
     isActive: Joi.boolean().default(true),
     username: Joi.string().token().lowercase().required(),
-    password: Joi.string(),
-    publicKey: Joi.string(),
-    encPrivateKey: Joi.string(),
+    password: Joi.string().required(),
+    salt: Joi.string().required(),
+    publicKey: Joi.string().required(),
+    encPrivateKey: Joi.string().required(),
     email: Joi.string().email().lowercase().required(),
     roles: Joi.object().keys({
         admin: Joi.object().keys({
