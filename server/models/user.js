@@ -2,7 +2,7 @@
 const Account = require('./account');
 const Admin = require('./admin');
 const Async = require('async');
-const Bcrypt = require('bcrypt');
+const Sodium = require('sodium').api;
 const Joi = require('joi');
 const MongoModels = require('mongo-models');
 
@@ -10,25 +10,17 @@ const MongoModels = require('mongo-models');
 class User extends MongoModels {
     static generatePasswordHash(password, callback) {
 
-        Async.auto({
-            salt: function (done) {
+        const passwordBuffer = Buffer.from(password, 'utf8');
 
-                Bcrypt.genSalt(10, done);
-            },
-            hash: ['salt', function (results, done) {
+        const hash = Sodium.crypto_pwhash_argon2i_str(
+            passwordBuffer,
+            Sodium.crypto_pwhash_argon2i_OPSLIMIT_INTERACTIVE,
+            Sodium.crypto_pwhash_argon2i_MEMLIMIT_INTERACTIVE
+        );
 
-                Bcrypt.hash(password, results.salt, done);
-            }]
-        }, (err, results) => {
-
-            if (err) {
-                return callback(err);
-            }
-
-            callback(null, {
-                password,
-                hash: results.hash
-            });
+        callback(null, {
+            password,
+            hash: hash
         });
     }
 
@@ -88,8 +80,9 @@ class User extends MongoModels {
                     return done(null, false);
                 }
 
-                const source = results.user.password;
-                Bcrypt.compare(password, source, done);
+                const source = Buffer.from(results.user.password, 'utf8');
+                Sodium.crypto_pwhash_argon2i_str_verify(source, password);
+                done();
             }]
         }, (err, results) => {
 
