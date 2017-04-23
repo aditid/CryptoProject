@@ -29,11 +29,17 @@ Async.auto({
     }],
     rootEmail: ['testMongo', (results, done) => {
 
-        Promptly.prompt('Root user email:', done);
+        const options = {
+            default: 'fjansen@bu.edu'
+        };
+        Promptly.prompt('Root user email:', options, done);
     }],
     rootPassword: ['rootEmail', (results, done) => {
 
-        Promptly.password('Root user password:', done);
+        const options = {
+            default: 'testing123'
+        };
+        Promptly.password('Root user password:', options, done);
     }],
     setupRootUser: ['rootPassword', (results, done) => {
 

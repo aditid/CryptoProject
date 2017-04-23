@@ -48,13 +48,13 @@ class User extends MongoModels {
     /**
      * Key derivation based on Argon2i.
      *
-     * @param key_length Length of derived key
+     * @param keyLength Length of derived key
      * @param pass Password for key derivation
      * @param salt Salt for key derivation
      * @returns {Buffer}
      */
-    static generateArgonKey(key_length, pass, salt) {
-        let out = Buffer.allocUnsafe(key_length);
+    static generateArgonKey(keyLength, pass, salt) {
+        let out = Buffer.allocUnsafe(keyLength);
         const password = Buffer.from(pass, 'utf8');
         salt = Buffer.from(salt, 'utf8');
 
@@ -190,14 +190,14 @@ class User extends MongoModels {
                     return done(null, false);
                 }
 
-                const source = Buffer.from(results.user.password, 'utf8');
-                // User password is used both for authentication and key generation
-                // Append "nonce" to generate two different hashes
-                password = password + authConcat;
+                const pwKey = User.generateArgonKey(32, Buffer.from(password, 'utf8'), Buffer.from(results.user.salt, 'base64'));
+                const authKey = User.generateArgonKey(32, pwKey, AUTH_SALT);
 
-                let res = Sodium.crypto_pwhash_argon2i_str_verify(source, Buffer.from(password, 'utf8'));
-
-                done(null, res);
+                if (results.user.password === authKey.toString('hex')) {
+                    done(null, true);
+                } else {
+                    done(null, false);
+                }
             }]
         }, (err, results) => {
 
