@@ -30,8 +30,8 @@ class User extends MongoModels {
             MEMORY
         );
 
-        const hashParts = encodedHash.toString().split('$');
-        const hash = hashParts[hashParts.length - 1];
+        const hashParts = encodedHash.toString('utf8').split('$');
+        const hash = hashParts[hashParts.length - 1].replace(/\0/g, '');
         const salt = hashParts[hashParts.length - 2];
 
         let authKey = User.generateArgonKey(32, Buffer.from(hash, 'base64'), AUTH_SALT);
