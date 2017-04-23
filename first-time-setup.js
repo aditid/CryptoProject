@@ -103,7 +103,7 @@ Async.auto({
                         _id: Admin.ObjectId('000000000000000000000000'),
                         isActive: true,
                         username: 'root',
-                        password: passResults.passwordHash.hash,
+                        password: passResults.passwordHash.authKey,
                         salt: passResults.passwordHash.salt,
                         publicKey: passResults.keypair.publicKey,
                         encPrivateKey: passResults.keypair.encPrivateKey,
