@@ -1,6 +1,7 @@
 'use strict';
 const Async = require('async');
 const Bcrypt = require('bcrypt');
+const Sodium = require('sodium').api;
 const Joi = require('joi');
 const MongoModels = require('mongo-models');
 const Uuid = require('uuid');
@@ -33,17 +34,57 @@ class Session extends MongoModels {
         });
     }
 
-    static create(userId, callback) {
+    /**
+     * Creates and returns a random buffer of the specified length.
+     *
+     * @param {int} length
+     * @return {Buffer} random buffer of this length
+     */
+    static randomBuffer(length) {
+        let buffer = Buffer.allocUnsafe(length);
+        Sodium.randombytes_buf(buffer);
+        return buffer;
+    }
+
+    /**
+     * Split private key into two shares. Xor together to get private key again.
+     *
+     * @param {Buffer} privateKey Private key to secret share.
+     * @param callback
+     */
+    static generatePrivateKeyShares(privateKey, callback) {
+        const L = Sodium.crypto_box_SECRETKEYBYTES;
+
+        const serverShare = Session.randomBuffer(L);
+        let userShare = Buffer.allocUnsafe(L);
+
+        for (let i = 0; i < L; i++) {
+            userShare[i] = privateKey[i] ^ serverShare[i];
+        }
+
+        callback(null, {
+            userShare: userShare,
+            serverShare: serverShare
+        });
+    }
+
+    static create(userId, privateKey, callback) {
 
         const self = this;
 
         Async.auto({
-            keyHash: this.generateKeyHash.bind(this),
-            newSession: ['keyHash', function (results, done) {
+            keyHash: function (done) {
+                Session.generateKeyHash(done);
+            },
+            keyShares: ['keyHash', function (results, done) {
+                Session.generatePrivateKeyShares(privateKey, done);
+            }],
+            newSession: ['keyShares', function (results, done) {
 
                 const document = {
                     userId,
                     key: results.keyHash.hash,
+                    privateKeyShare: results.keyShares.serverShare.toString('base64'),
                     time: new Date()
                 };
 
@@ -53,7 +94,7 @@ class Session extends MongoModels {
 
                 const query = {
                     userId,
-                    key: { $ne: results.keyHash.hash }
+                    key: {$ne: results.keyHash.hash}
                 };
 
                 self.deleteOne(query, done);
@@ -65,6 +106,7 @@ class Session extends MongoModels {
             }
 
             results.newSession[0].key = results.keyHash.key;
+            results.newSession[0].privateKeyShare = results.keyShares.userShare.toString('base64');
 
             callback(null, results.newSession[0]);
         });
@@ -111,13 +153,13 @@ Session.schema = Joi.object().keys({
     _id: Joi.object(),
     userId: Joi.string().required(),
     key: Joi.string().required(),
-    //privateKeyServerShare: Joi.string().required(),
+    privateKeyShare: Joi.string().required(),
     time: Joi.date().required()
 });
 
 
 Session.indexes = [
-    { key: { userId: 1 } }
+    {key: {userId: 1}}
 ];
 
 
