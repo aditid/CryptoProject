@@ -17,7 +17,7 @@ class User extends MongoModels {
     /**
      * Generate an Argon2i hash for a given password.
      *
-     * @param password The user's password
+     * @param {str} password The user's password
      * @param callback
      */
     static generatePasswordHash(password, callback) {
@@ -34,13 +34,13 @@ class User extends MongoModels {
         const hash = hashParts[hashParts.length - 1].replace(/\0/g, '');
         const salt = hashParts[hashParts.length - 2];
 
-        let authKey = User.generateArgonKey(32, Buffer.from(hash, 'base64'), AUTH_SALT);
-        let privKeyEncKey = User.generateArgonKey(32, hash, PRIVATE_KEY_SALT);
+        let authKey = User.generateArgonKey(32, new Buffer(hash, 'base64'), new Buffer(AUTH_SALT, 'utf8'));
+        let privKeyEncKey = User.generateArgonKey(32, new Buffer(hash, 'base64'), new Buffer(PRIVATE_KEY_SALT, 'utf8'));
 
         callback(null, {
             password,
             privKeyEncKey: privKeyEncKey,
-            authKey: authKey.toString('hex'),
+            authKey: authKey.toString('base64'),
             salt: salt
         });
     }
@@ -48,19 +48,17 @@ class User extends MongoModels {
     /**
      * Key derivation based on Argon2i.
      *
-     * @param keyLength Length of derived key
-     * @param pass Password for key derivation
-     * @param salt Salt for key derivation
+     * @param {int} keyLength Length of derived key
+     * @param {Buffer} pass Password for key derivation
+     * @param {Buffer} salt Salt for key derivation
      * @returns {Buffer}
      */
     static generateArgonKey(keyLength, pass, salt) {
         let out = Buffer.allocUnsafe(keyLength);
-        const password = Buffer.from(pass, 'utf8');
-        salt = Buffer.from(salt, 'utf8');
 
         Sodium.crypto_pwhash_argon2i(
             out,
-            password,
+            pass,
             salt,
             ITERATIONS,
             MEMORY,
@@ -83,12 +81,12 @@ class User extends MongoModels {
         const encPrivateKey = User.encryptRecordUnderKey(
             keypair.secretKey,
             Buffer.from([], 'utf8'),
-            Buffer.from(key, 'hex')
+            Buffer.from(key, 'base64')
         );
 
         callback(null, {
-            publicKey: keypair.publicKey.toString('hex'),
-            encPrivateKey: encPrivateKey[0].toString('hex') + '$' + encPrivateKey[1].toString('hex')
+            publicKey: keypair.publicKey.toString('base64'),
+            encPrivateKey: encPrivateKey[0].toString('base64') + '$' + encPrivateKey[1].toString('base64')
         });
     }
 
@@ -97,22 +95,44 @@ class User extends MongoModels {
      * note that you have to hold on to the file metadata
      *
      * @param record - the record to be encrypted
-     * @param recordMetadata - the metadata for this file;
+     * @param metadata - the metadata for this record;
      *                 is required for decryption
-     * @param key - the file key to encrypt this file
+     * @param key - the file key to encrypt this record
      * @return [nonce, ciphertext] where the decryption is
      *         decrypt(ciphertext, fileMetadata, nonce, fileKey)
      *         Both nonce and ciphertext are Buffers.
      */
-    static encryptRecordUnderKey(record, recordMetadata, key) {
+    static encryptRecordUnderKey(record, metadata, key) {
         const nonce = User.randomBuffer(Sodium.crypto_aead_aes256gcm_NPUBBYTES);
         const cipherText = Sodium.crypto_aead_aes256gcm_encrypt(
             record,
-            recordMetadata,
+            metadata,
             nonce,
             key);
 
         return [nonce, cipherText]
+    }
+
+    /**
+     * Decrypt a cipher text given the metadata, nonce and key.
+     *
+     * @param {string} cipherText - Ciphertext to decrypt as base64 string
+     * @param {string} metadata - Metadata associated with encryption
+     * @param {string} nonce - Nonce used for encryption as base64 string
+     * @param {string} key - Key to decrypt this record as base64 string
+     * @return plainText
+     */
+    static decryptRecordUnderKey(cipherText, metadata, nonce, key) {
+        const cipherTextBuffer = new Buffer(cipherText, 'base64');
+        const metadataBuffer = new Buffer(metadata, 'utf8');
+        const nonceBuffer = new Buffer(nonce, 'base64');
+        const keyBuffer = new Buffer(key, 'base64');
+
+        return Sodium.crypto_aead_aes256gcm_decrypt(
+            cipherTextBuffer,
+            metadataBuffer,
+            nonceBuffer,
+            keyBuffer);
     }
 
     /**
@@ -190,14 +210,38 @@ class User extends MongoModels {
                     return done(null, false);
                 }
 
-                const pwKey = User.generateArgonKey(32, Buffer.from(password, 'utf8'), Buffer.from(results.user.salt, 'base64'));
-                const authKey = User.generateArgonKey(32, pwKey, AUTH_SALT);
+                const pwKey = User.generateArgonKey(32, new Buffer(password, 'utf8'), new Buffer(results.user.salt, 'base64'));
+                const authKey = User.generateArgonKey(32, pwKey, new Buffer(AUTH_SALT, 'utf8'));
 
-                if (results.user.password === authKey.toString('hex')) {
-                    done(null, true);
+                if (results.user.password === authKey.toString('base64')) {
+                    done(null, {
+                        pwKey: pwKey
+                    });
                 } else {
                     done(null, false);
                 }
+            }],
+            privateKeyDecrypt: ['passwordMatch', function (results, done) {
+                if (!results.passwordMatch) {
+                    return callback();
+                }
+
+                const privateKeyEncKey = User.generateArgonKey(
+                    32,
+                    results.passwordMatch.pwKey,
+                    new Buffer(PRIVATE_KEY_SALT, 'utf8')
+                ).toString('base64');
+
+                const encPrivateKey = results.user.encPrivateKey.split('$');
+
+                const decryptedPrivateKey = User.decryptRecordUnderKey(
+                    encPrivateKey[1],
+                    '',
+                    encPrivateKey[0],
+                    privateKeyEncKey
+                );
+
+                done(null, decryptedPrivateKey);
             }]
         }, (err, results) => {
 
@@ -206,6 +250,7 @@ class User extends MongoModels {
             }
 
             if (results.passwordMatch) {
+                results.user.decryptedPrivateKey = results.privateKeyDecrypt;
                 return callback(null, results.user);
             }
 
