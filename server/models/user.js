@@ -34,7 +34,7 @@ class User extends MongoModels {
         const hash = hashParts[hashParts.length - 1];
         const salt = hashParts[hashParts.length - 2];
 
-        let authKey = User.generateArgonKey(32, hash, AUTH_SALT);
+        let authKey = User.generateArgonKey(32, Buffer.from(hash, 'base64'), AUTH_SALT);
         let privKeyEncKey = User.generateArgonKey(32, hash, PRIVATE_KEY_SALT);
 
         callback(null, {
