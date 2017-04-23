@@ -106,6 +106,8 @@ class Session extends MongoModels {
             }
 
             results.newSession[0].key = results.keyHash.key;
+            // Session contains server share, already stored in db
+            // Overwrite with user share to be sent back as login response
             results.newSession[0].privateKeyShare = results.keyShares.userShare.toString('base64');
 
             callback(null, results.newSession[0]);
