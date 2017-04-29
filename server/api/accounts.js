@@ -3,6 +3,7 @@ const Async = require('async');
 const AuthPlugin = require('../auth');
 const Boom = require('boom');
 const Joi = require('joi');
+const Sodium = require('sodium').api;
 
 
 const internals = {};
@@ -427,18 +428,67 @@ internals.applyRoutes = function (server, next) {
         config: {
             auth: {
                 strategy: 'simple',
-                scope: 'admin'
+                scope: ['admin', 'account']
             },
             validate: {
                 payload: {
                     data: Joi.string().required(),
-                    key: Joi.string().required()
+                    keyShare: Joi.string().required()
                 }
             },
             pre: [{
-                assign: 'encryption',
+                assign: 'privateKey',
                 method : function (request, reply) {
-                    Session.getKeyShare(request.pre.session.key, );
+
+                    if (!request.auth.credentials.session.privateKeyShare) {
+                        return reply(Boom.notFound('Private key share not found.'));
+                    }
+
+                    let privateKeyShareServer = new Buffer(request.auth.credentials.session.privateKeyShare, 'base64');
+                    let privateKeyShareUser = new Buffer(request.payload.keyShare, 'base64');
+                    const L = Sodium.crypto_box_SECRETKEYBYTES;
+
+                    let privateKey = Buffer.allocUnsafe(L);
+
+                    for (let i = 0; i < L; i++) {
+                        privateKey[i] = privateKeyShareServer[i] ^ privateKeyShareUser[i];
+                    }
+
+                    reply(privateKey);
+                }
+            }, {
+                assign: 'publicKeys',
+                method: function (request, reply) {
+
+                    let userId;
+
+                    if (request.auth.credentials.roles.admin) {
+                        if (request.params.id === request.auth.credentials.session.userId) {
+                            return reply(Boom.badRequest('You cannot create a note for an admin.'));
+                        } else {
+                            // Writing note for account, get their public key
+                            userId = request.params.id;
+                        }
+                    } else {
+                        // Writing note with account role, get public key of admin
+                        userId = '000000000000000000000000';
+                    }
+
+                    User.findById(userId, (err, user) => {
+
+                        if (err) {
+                            return reply(err);
+                        }
+
+                        if (!user) {
+                            return reply(Boom.notFound('User document not found.'));
+                        }
+                        if (!user.publicKey) {
+                            return reply(Boom.notFound('No public key for user found.'));
+                        }
+
+                        reply(user);
+                    });
                 }
             }]
         },
@@ -446,7 +496,7 @@ internals.applyRoutes = function (server, next) {
 
             Async.auto({
                 encryption: function (done) {
-
+                    console.log(request);
                 }
             });
 

@@ -145,29 +145,6 @@ class Session extends MongoModels {
             callback();
         });
     }
-
-    static getKeyShare(id, callback) {
-
-        const self = this;
-
-        Async.auto({
-            key: function (done) {
-
-                self.findById(id, done);
-            }
-        }, (err, results) => {
-
-            if (err) {
-                return callback(err);
-            }
-
-            if (results.privateKeyShare) {
-                return callback(results.privateKeyShare);
-            }
-
-            callback();
-        })
-    }
 }
 
 
