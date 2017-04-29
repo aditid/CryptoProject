@@ -13,6 +13,7 @@ internals.applyRoutes = function (server, next) {
     const Account = server.plugins['hapi-mongo-models'].Account;
     const User = server.plugins['hapi-mongo-models'].User;
     const Status = server.plugins['hapi-mongo-models'].Status;
+    const Session = server.plugins['hapi-mongo-models'].Session;
 
 
     server.route({
@@ -430,11 +431,24 @@ internals.applyRoutes = function (server, next) {
             },
             validate: {
                 payload: {
-                    data: Joi.string().required()
+                    data: Joi.string().required(),
+                    key: Joi.string().required()
                 }
-            }
+            },
+            pre: [{
+                assign: 'encryption',
+                method : function (request, reply) {
+                    Session.getKeyShare(request.pre.session.key, );
+                }
+            }]
         },
         handler: function (request, reply) {
+
+            Async.auto({
+                encryption: function (done) {
+
+                }
+            });
 
             const id = request.params.id;
             const update = {

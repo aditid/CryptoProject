@@ -222,6 +222,7 @@ class User extends MongoModels {
                 }
             }],
             privateKeyDecrypt: ['passwordMatch', function (results, done) {
+
                 if (!results.passwordMatch) {
                     return callback();
                 }

@@ -56,7 +56,6 @@ const manifest = {
                         AdminGroup: './server/models/admin-group',
                         Admin: './server/models/admin',
                         AuthAttempt: './server/models/auth-attempt',
-                        NoteEntry: './server/models/note-entry',
                         Session: './server/models/session',
                         Status: './server/models/status',
                         User: './server/models/user'
