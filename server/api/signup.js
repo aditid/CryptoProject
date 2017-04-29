@@ -140,9 +140,14 @@ internals.applyRoutes = function (server, next) {
 
                     done();
                 }],
-                session: ['linkUser', 'linkAccount', function (results, done) {
+                privateKey: ['linkUser', 'linkAccount', function (results, done) {
 
-                    Session.create(results.user._id.toString(), done);
+                    // TODO getting the decrypted private key should not validate the password, refactor this
+                    User.findByCredentials(request.payload.username, request.payload.password, done);
+                }],
+                session: ['privateKey', function (results, done) {
+
+                    Session.create(results.user._id.toString(), results.privateKey.decryptedPrivateKey, done);
                 }]
             }, (err, results) => {
 
