@@ -145,18 +145,31 @@ class User extends MongoModels {
      */
     static encryptRecordKey(recordKey, publicKey, secretKey) {
         const nonce = User.randomBuffer(Sodium.crypto_box_NONCEBYTES);
-        const cipherText = Sodium.crypto_box(recordKey, nonce, publicKey,
-            secretKey);
+        const cipherText = Sodium.crypto_box(recordKey, nonce, publicKey, secretKey);
 
         return [nonce, cipherText];
     }
 
-    static decryptRecordKey() {
+    /**
+     * Decrypt record key using private key, public key of user who encrypted the key, and nonce.
+     *
+     * @param {string} recordKeyCiphertext - Ciphertext to decrypt as base64 string
+     * @param {string} nonce - Nonce used for encryption as base64 string
+     * @param {string} publicKey - Public key of user who encrypted record for authentication
+     * @param {Buffer} privateKeyBuffer - Private key to decrypt this record
+     * @returns {*}
+     */
+    static decryptRecordKey(recordKeyCiphertext, nonce, publicKey, privateKeyBuffer) {
+        const cipherTextBuffer = new Buffer(recordKeyCiphertext, 'base64');
+        const nonceBuffer = new Buffer(nonce, 'base64');
+        const publicKeyBuffer = new Buffer(publicKey, 'base64');
 
+        return Sodium.crypto_box_open(cipherTextBuffer, nonceBuffer, publicKeyBuffer, privateKeyBuffer);
     }
 
     /**
      * Creates and returns a random buffer of the specified length.
+     *
      * @param {int} length
      * @return {Buffer} random buffer of this length
      */

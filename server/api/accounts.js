@@ -14,7 +14,6 @@ internals.applyRoutes = function (server, next) {
     const Account = server.plugins['hapi-mongo-models'].Account;
     const User = server.plugins['hapi-mongo-models'].User;
     const Status = server.plugins['hapi-mongo-models'].Status;
-    const Session = server.plugins['hapi-mongo-models'].Session;
 
 
     server.route({
@@ -444,7 +443,7 @@ internals.applyRoutes = function (server, next) {
                     }
 
                     let privateKeyShareServer = new Buffer(request.auth.credentials.session.privateKeyShare, 'base64');
-                    let privateKeyShareUser = new Buffer(request.payload.keyShare, 'base64');
+                    let privateKeyShareUser = new Buffer(decodeURIComponent(request.query.keyShare), 'base64');
                     const L = Sodium.crypto_box_SECRETKEYBYTES;
 
                     let privateKey = Buffer.allocUnsafe(L);
@@ -455,10 +454,119 @@ internals.applyRoutes = function (server, next) {
 
                     reply(privateKey);
                 }
+            }, {
+                assign: 'user',
+                method: function (request, reply) {
+
+                    User.findById(request.params.id, (err, user) => {
+
+                        if (err) {
+                            return reply(err);
+                        }
+
+                        if (!user) {
+                            return reply(Boom.notFound('User document not found.'));
+                        }
+
+                        reply(user);
+                    });
+                }
+            }, {
+                assign: 'account',
+                method: function (request, reply) {
+
+                    Account.findById(request.pre.user.roles.account.id, (err, account) => {
+
+                        if (err) {
+                            return reply(err);
+                        }
+
+                        if (!account) {
+                            return reply(Boom.notFound('Document not found.'));
+                        }
+
+                        if (!account.user || !account.user.id) {
+                            return reply(account).takeover();
+                        }
+
+                        reply(account);
+                    });
+                }
+            }, {
+                assign: 'verifyUser',
+                method: function (request, reply) {
+
+                    let validUser = false;
+                    let notes = [];
+
+                    if (!request.pre.account.notes) {
+                        return reply(Boom.notFound('No notes found.'))
+                    }
+
+                    request.pre.account.notes.forEach(function (val, i, obj) {
+                        for (let metadata of obj[i]._metadata) {
+                            if (metadata.userId === request.auth.credentials.session.userId) {
+                                validUser = true;
+                                // Get rid of keys for different users that we cannot decrypt
+                                // We only care about the key that is encrypted with our own public key
+                                obj[i]._metadata = metadata;
+                                notes.push(obj[i]);
+                            }
+                        }
+                    });
+
+                    // Overwrite all notes with ones we care about
+                    request.pre.account.notes = notes;
+
+                    if (!validUser) {
+                        return reply(Boom.forbidden('No notes for account found.'));
+                    }
+
+                    reply();
+                }
+            }, {
+                assign: 'decryptKey',
+                method: function (request, reply) {
+
+                    if (!request.pre.account.notes) {
+                        return reply(Boom.notFound('No notes found.'))
+                    }
+
+                    request.pre.account.notes.forEach(function (val, i, obj) {
+
+                        const nonce = obj[i]._metadata.encryptedRecordKey.split('$')[0];
+                        const encRecordKey = obj[i]._metadata.encryptedRecordKey.split('$')[1];
+
+                        const decryptedRecordKey = User.decryptRecordKey(
+                            encRecordKey,
+                            nonce,
+                            obj[i].userCreated.publicKey,
+                            request.pre.privateKey
+                        );
+
+                        obj[i]._metadata.decryptedRecordKey = decryptedRecordKey.toString('base64');
+                    });
+
+                    reply();
+                }
             }]
         },
         handler: function (request, reply) {
 
+            request.pre.account.notes.forEach(function (val, i, obj) {
+
+                const nonce = obj[i].data.split('$')[0];
+                const cipherText = obj[i].data.split('$')[1];
+
+                obj[i].data = User.decryptRecordUnderKey(
+                    cipherText,
+                    '',
+                    nonce,
+                    obj[i]._metadata.decryptedRecordKey
+                ).toString('utf8');
+            });
+
+            reply(request.pre.account.notes);
         }
     });
 
@@ -582,7 +690,8 @@ internals.applyRoutes = function (server, next) {
                         timeCreated: new Date(),
                         userCreated: {
                             id: request.auth.credentials.user._id.toString(),
-                            name: request.auth.credentials.user.username
+                            name: request.auth.credentials.user.username,
+                            publicKey: request.auth.credentials.user.publicKey
                         },
                         _metadata: request.pre.publicKeys.keys
                     }
