@@ -13,11 +13,9 @@ NoteEntry.schema = Joi.object().keys({
         id: Joi.string().required(),
         name: Joi.string().lowercase().required()
     }).required(),
-    _metadata: Joi.object().keys({
-        keys: Joi.object().keys({
-            userId: Joi.string().required(),
-            key: Joi.string().required()
-        })
+    _metadata: Joi.array().items({
+        userId: Joi.string().required(),
+        encryptedRecordKey: Joi.string().required()
     }).required()
 });
 

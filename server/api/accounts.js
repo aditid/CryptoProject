@@ -421,6 +421,47 @@ internals.applyRoutes = function (server, next) {
         }
     });
 
+    server.route({
+        method: 'GET',
+        path: '/accounts/{id}/notes',
+        config: {
+            auth: {
+                strategy: 'simple',
+                scope: ['admin', 'account']
+            },
+            validate: {
+                query: {
+                    keyShare: Joi.string().required()
+                }
+            },
+            pre: [{
+                assign: 'privateKey',
+                method: function (request, reply) {
+
+                    // Get private key of user, based on server and user key shares
+                    if (!request.auth.credentials.session.privateKeyShare) {
+                        return reply(Boom.notFound('Private key share not found.'));
+                    }
+
+                    let privateKeyShareServer = new Buffer(request.auth.credentials.session.privateKeyShare, 'base64');
+                    let privateKeyShareUser = new Buffer(request.payload.keyShare, 'base64');
+                    const L = Sodium.crypto_box_SECRETKEYBYTES;
+
+                    let privateKey = Buffer.allocUnsafe(L);
+
+                    for (let i = 0; i < L; i++) {
+                        privateKey[i] = privateKeyShareServer[i] ^ privateKeyShareUser[i];
+                    }
+
+                    reply(privateKey);
+                }
+            }]
+        },
+        handler: function (request, reply) {
+
+        }
+    });
+
 
     server.route({
         method: 'POST',
@@ -437,9 +478,11 @@ internals.applyRoutes = function (server, next) {
                 }
             },
             pre: [{
+                // TODO refactor this into separate method
                 assign: 'privateKey',
-                method : function (request, reply) {
+                method: function (request, reply) {
 
+                    // Get private key of user, based on server and user key shares
                     if (!request.auth.credentials.session.privateKeyShare) {
                         return reply(Boom.notFound('Private key share not found.'));
                     }
@@ -460,6 +503,7 @@ internals.applyRoutes = function (server, next) {
                 assign: 'publicKeys',
                 method: function (request, reply) {
 
+                    // Get all public keys to encrypt file key under
                     let userId;
 
                     if (request.auth.credentials.roles.admin) {
@@ -487,29 +531,60 @@ internals.applyRoutes = function (server, next) {
                             return reply(Boom.notFound('No public key for user found.'));
                         }
 
-                        reply(user);
+                        // POST is for user ID, but notes are attached to account ID
+                        // Store account data of target user temporary so we can extract ID later
+                        reply({
+                            account: user,
+                            keys: [{
+                                userId: request.auth.credentials.user._id.toString(),
+                                publicKey: request.auth.credentials.user.publicKey
+                            }, {
+                                userId: user._id.toString(),
+                                publicKey: user.publicKey
+                            }]
+                        });
                     });
+                }
+            }, {
+                assign: 'encrypt',
+                method: function (request, reply) {
+
+                    // Generate random symmetric encryption key
+                    let encKey = User.randomBuffer(Sodium.crypto_aead_aes256gcm_KEYBYTES);
+
+                    // Encrypt file
+                    let record = new Buffer(request.payload.data, 'utf8');
+                    let encryptedRecord = User.encryptRecordUnderKey(
+                        record,
+                        new Buffer('', 'utf8'),
+                        encKey
+                    );
+
+                    request.pre.publicKeys.keys.forEach(function (val, i, obj) {
+                        const recordKey = User.encryptRecordKey(encKey, new Buffer(obj[i].publicKey, 'base64'), request.pre.privateKey);
+                        obj[i].encryptedRecordKey = recordKey[0].toString('base64') + '$' + recordKey[1].toString('base64');
+                        // Remove before writing to database, this information is not needed
+                        delete obj[i].publicKey;
+                    });
+
+                    reply(encryptedRecord);
                 }
             }]
         },
         handler: function (request, reply) {
 
-            Async.auto({
-                encryption: function (done) {
-                    console.log(request);
-                }
-            });
-
-            const id = request.params.id;
+            // POST is for user ID, but notes are attached to account ID
+            const id = request.pre.publicKeys.account.roles.account.id;
             const update = {
                 $push: {
                     notes: {
-                        data: request.payload.data,
+                        data: request.pre.encrypt[0].toString('base64') + '$' + request.pre.encrypt[1].toString('base64'),
                         timeCreated: new Date(),
                         userCreated: {
                             id: request.auth.credentials.user._id.toString(),
                             name: request.auth.credentials.user.username
-                        }
+                        },
+                        _metadata: request.pre.publicKeys.keys
                     }
                 }
             };
@@ -520,7 +595,11 @@ internals.applyRoutes = function (server, next) {
                     return reply(err);
                 }
 
-                reply(account);
+                if (!account) {
+                    return reply(Boom.notFound('User document not found.'))
+                }
+
+                reply(account.notes);
             });
         }
     });
@@ -611,7 +690,7 @@ internals.applyRoutes = function (server, next) {
                     return reply(Boom.notFound('Document not found.'));
                 }
 
-                reply({ message: 'Success.' });
+                reply({message: 'Success.'});
             });
         }
     });

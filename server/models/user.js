@@ -80,8 +80,8 @@ class User extends MongoModels {
 
         const encPrivateKey = User.encryptRecordUnderKey(
             keypair.secretKey,
-            Buffer.from([], 'utf8'),
-            Buffer.from(key, 'base64')
+            new Buffer('', 'utf8'),
+            new Buffer(key, 'base64')
         );
 
         callback(null, {
@@ -94,11 +94,11 @@ class User extends MongoModels {
      * Encrypt the file under the file key, return [nonce, encFile],
      * note that you have to hold on to the file metadata
      *
-     * @param record - the record to be encrypted
-     * @param metadata - the metadata for this record;
+     * @param {Buffer} record - the record to be encrypted
+     * @param {Buffer} metadata - the metadata for this record;
      *                 is required for decryption
-     * @param key - the file key to encrypt this record
-     * @return [nonce, ciphertext] where the decryption is
+     * @param {Buffer} key - the file key to encrypt this record
+     * @return {[Buffer, Buffer]} where the decryption is
      *         decrypt(ciphertext, fileMetadata, nonce, fileKey)
      *         Both nonce and ciphertext are Buffers.
      */
@@ -110,7 +110,7 @@ class User extends MongoModels {
             nonce,
             key);
 
-        return [nonce, cipherText]
+        return [nonce, cipherText];
     }
 
     /**
@@ -133,6 +133,26 @@ class User extends MongoModels {
             metadataBuffer,
             nonceBuffer,
             keyBuffer);
+    }
+
+    /**
+     * Encrypt record key using public and secret key.
+     *
+     * @param {Buffer} recordKey - Key to encrypt
+     * @param {Buffer} publicKey - Public key to encrypt it under
+     * @param {Buffer} secretKey - Secret key used to verify decryption with corresponding public key
+     * @returns {[Buffer, Buffer]} Array of nonce and ciphertext
+     */
+    static encryptRecordKey(recordKey, publicKey, secretKey) {
+        const nonce = User.randomBuffer(Sodium.crypto_box_NONCEBYTES);
+        const cipherText = Sodium.crypto_box(recordKey, nonce, publicKey,
+            secretKey);
+
+        return [nonce, cipherText];
+    }
+
+    static decryptRecordKey() {
+
     }
 
     /**
